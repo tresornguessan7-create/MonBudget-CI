@@ -152,6 +152,7 @@
     .reco-t{font-size:11px;font-weight:700;margin-bottom:8px;color:#C0652A}
     .reco-i{font-size:11px;color:#2D4A5A;line-height:1.6;margin-bottom:4px}
     svg text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+    @keyframes tourPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,209,102,.65)}50%{box-shadow:0 0 0 12px rgba(255,209,102,0)}}
   </style>
 </head>
 <body>
@@ -174,6 +175,8 @@
 </div>
 
 <div class="page" id="pg"></div>
+
+<button onclick="startTour()" title="Visite guidée" style="position:fixed;bottom:24px;right:16px;width:46px;height:46px;background:#00B4A6;color:#fff;border:none;border-radius:50%;font-size:21px;font-weight:900;cursor:pointer;box-shadow:0 4px 16px rgba(0,180,166,.5);z-index:997;font-family:inherit;line-height:1">?</button>
 
 <script>
 // ── PWA ────────────────────────────────────────────────
@@ -215,7 +218,7 @@ var CC={besoin:'#5BA4CF',envie:'#DDA0DD',epargne:'#06D6A0'};
 // ── STATE ──────────────────────────────────────────────
 var S={
   tab:'ov',
-  incomes:[{id:'sal',label:'Salaire principal',amt:''},{id:'free',label:'Revenus Freelance',amt:''},{id:'aut',label:'Autres revenus',amt:''}],
+  incomes:[{id:'sal',label:'Revenu principal',amt:''},{id:'free',label:'Revenus Freelance / Mission',amt:''},{id:'aut',label:'Autres revenus',amt:''}],
   exp:{},       // budget planifié {catId: string}
   custom:[],    // catégories perso
   txs:[],       // dépenses réelles [{id,date,catId,amount,note}]
@@ -289,7 +292,14 @@ function load(){
     var raw=localStorage.getItem('mbc-v3')||localStorage.getItem('mbc-v2');
     var d=JSON.parse(raw||'null');
     if(!d)return;
-    if(d.incomes)S.incomes=d.incomes;
+    if(d.incomes){S.incomes=d.incomes;
+      // Migration : renommer "Salaire principal" → "Revenu principal"
+      S.incomes=S.incomes.map(function(i){
+        if(i.id==='sal'&&i.label==='Salaire principal')return Object.assign({},i,{label:'Revenu principal'});
+        if(i.id==='free'&&i.label==='Revenus Freelance')return Object.assign({},i,{label:'Revenus Freelance / Mission'});
+        return i;
+      });
+    }
     if(d.exp)S.exp=d.exp;
     if(d.custom)S.custom=d.custom;
     if(d.txs)S.txs=d.txs;
@@ -381,7 +391,8 @@ function rOv(){
 function rInc(){
   var cv=calc();
   var rows=S.incomes.map(function(i){return '<div class="ir"><label class="ir-l">'+esc(i.label)+'</label><div class="ir-f"><input type="number" inputmode="numeric" class="big" value="'+esc(String(i.amt))+'" placeholder="0" data-id="'+esc(i.id)+'" oninput="onInc(this)"><span class="ir-u">FCFA</span></div></div>';}).join('');
-  return '<div class="card"><div class="card-ttl">💵 Mes revenus mensuels</div>'+rows+'<div class="sep"></div><label class="ir-l" style="font-size:10px">Ajouter une source</label><div class="add-row"><input type="text" class="ghost" id="ni" placeholder="Ex : Location, Dividendes…" onkeydown="if(event.key===\'Enter\')addInc()"><button class="btn" style="background:'+C.teal+'" onclick="addInc()">+</button></div></div><div class="tot"><div><div class="tot-l">Total revenus mensuels</div><div class="tot-s" style="color:'+(cv.totalInc>0?'rgba(6,214,160,.7)':'rgba(255,255,255,.3)')+'">'+( cv.totalInc>0?'Objectif épargne : '+fmt(cv.totalInc*0.2)+' (20%)':'Saisissez vos montants')+'</div></div><div class="tot-v" style="color:#06D6A0">'+fmt(cv.totalInc)+'</div></div>';
+  var hint='<div style="background:#F0FAF9;border-radius:10px;padding:10px 13px;margin-bottom:10px;display:flex;align-items:flex-start;gap:9px"><span style="font-size:16px;flex-shrink:0">💡</span><div style="font-size:11px;color:#2D6A65;line-height:1.6"><strong>Revenu variable ?</strong> Mettez à jour ces montants chaque début de mois selon ce que vous avez réellement reçu. Ça marche pour les salariés, freelances, entrepreneurs et étudiants.</div></div>';
+  return '<div class="card"><div class="card-ttl">💵 Mes revenus du mois</div>'+hint+rows+'<div class="sep"></div><label class="ir-l" style="font-size:10px">Ajouter une source de revenu</label><div class="add-row"><input type="text" class="ghost" id="ni" placeholder="Ex : Loyer perçu, Commerce, Bourse…" onkeydown="if(event.key===\'Enter\')addInc()"><button class="btn" style="background:'+C.teal+'" onclick="addInc()">+</button></div></div><div class="tot"><div><div class="tot-l">Total revenus mensuels</div><div class="tot-s" style="color:'+(cv.totalInc>0?'rgba(6,214,160,.7)':'rgba(255,255,255,.3)')+'">'+( cv.totalInc>0?'Objectif épargne : '+fmt(cv.totalInc*0.2)+' (20%)':'Saisissez vos montants')+'</div></div><div class="tot-v" style="color:#06D6A0">'+fmt(cv.totalInc)+'</div></div>';
 }
 
 // ── RENDER: BUDGET ─────────────────────────────────────
@@ -669,9 +680,38 @@ function nextBM(){
 function goToday(){S.bilM=curYM();render();}
 function dimInst(){S.showInst=false;save();render();}
 
+// ── ONBOARDING TOUR ────────────────────────────────────
+var TOUR=[
+  {icon:'👋',title:'Bienvenue sur MonBudget CI !',desc:"En quelques étapes, découvrez comment maîtriser votre budget en FCFA — simplement, sans inscription, et vos données restent sur votre téléphone.",tab:null},
+  {icon:'💵',title:'1. Revenus',desc:"Saisissez ici tout ce que vous gagnez ce mois : salaire, missions freelance, commerce, bourse, transferts... Mettez à jour chaque mois si vos revenus varient.",tab:'inc'},
+  {icon:'💸',title:'2. Budget',desc:"Répartissez vos revenus par catégorie. L'app suit la règle 50/30/20 : max 50% pour les Besoins, 30% pour les Envies, et au moins 20% en Épargne.",tab:'bud'},
+  {icon:'📝',title:'3. Journal',desc:"À chaque dépense, notez-la ici en 5 secondes : date, montant et catégorie. Votre suivi du mois se construit automatiquement.",tab:'jnl'},
+  {icon:'📋',title:'4. Bilan',desc:"En fin de mois, comparez ici ce que vous aviez prévu avec ce que vous avez réellement dépensé. Naviguez entre les mois avec les flèches.",tab:'bil'},
+  {icon:'⭐',title:'Score santé budget',desc:"Ce score (0 → 100) mesure l'équilibre de votre budget. Il apparaît sur l'Accueil. Visez 70 et plus en respectant la règle 50/30/20 !",tab:'ov'},
+];
+var tStep=0;
+function startTour(){tStep=0;_showTour();}
+function _showTour(){
+  var ov=document.getElementById('mbc-tour');if(ov)ov.remove();
+  var step=TOUR[tStep],isFirst=tStep===0,isLast=tStep===TOUR.length-1;
+  var dots=TOUR.map(function(s,i){return '<div style="width:'+(i===tStep?22:7)+'px;height:7px;border-radius:4px;background:'+(i===tStep?'#00B4A6':'rgba(255,255,255,.3)')+';transition:all .3s;margin:0 3px"></div>';}).join('');
+  var hlDiv='';
+  if(step.tab){var tabEl=document.getElementById('tab-'+step.tab);if(tabEl){var r=tabEl.getBoundingClientRect();hlDiv='<div style="position:fixed;top:'+(r.top-5)+'px;left:'+(r.left-4)+'px;width:'+(r.width+8)+'px;height:'+(r.height+10)+'px;border:2.5px solid #FFD166;border-radius:10px;animation:tourPulse 1.1s infinite;pointer-events:none;z-index:10001"></div>';}}
+  var arrowHTML=!isFirst?'<div style="text-align:center;padding-top:10px"><svg width="24" height="14" viewBox="0 0 24 14"><path d="M12 0L24 14H0Z" fill="#fff"/></svg></div>':'';
+  var cardPos=isFirst?'top:50%;left:16px;right:16px;transform:translateY(-50%);border-radius:20px;padding:28px 22px;':'bottom:0;left:0;right:0;border-radius:24px 24px 0 0;padding:0 20px 34px;';
+  var btn1='<button onclick="endTour()" style="padding:12px '+(isFirst?'22px':'14px')+';border:1.5px solid #DDE3EC;border-radius:12px;background:#fff;font-size:13px;color:#8D9BAD;cursor:pointer;font-family:inherit;font-weight:600">Passer'+(isFirst?'':' ✕')+'</button>';
+  var btn2='<button onclick="tourNext()" style="flex:1;padding:12px;border:none;border-radius:12px;background:#1B3A52;font-size:14px;font-weight:700;color:#fff;cursor:pointer;font-family:inherit">'+(isLast?'✅ C\'est parti !':'Suivant →')+'</button>';
+  var html='<div id="mbc-tour" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:rgba(10,22,34,.8)">'+hlDiv+'<div style="position:fixed;'+cardPos+'background:#fff;z-index:10000">'+arrowHTML+'<div style="display:flex;justify-content:center;align-items:center;gap:6px;margin:'+(isFirst?'0 0 22px':'14px 0 20px')+'">'+dots+'</div><div style="text-align:center;margin-bottom:20px"><div style="font-size:46px;margin-bottom:11px">'+step.icon+'</div><div style="font-size:17px;font-weight:800;color:#1B3A52;margin-bottom:10px">'+step.title+'</div><div style="font-size:13px;color:#5A6E80;line-height:1.7">'+step.desc+'</div></div><div style="display:flex;gap:10px">'+btn1+btn2+'</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function tourNext(){if(tStep<TOUR.length-1){tStep++;_showTour();}else{endTour();}}
+function endTour(){var ov=document.getElementById('mbc-tour');if(ov)ov.remove();try{localStorage.setItem('mbc-toured','1');}catch(e){}}
+function checkTour(){try{if(!localStorage.getItem('mbc-toured'))setTimeout(startTour,500);}catch(e){}}
+
 // ── INIT ───────────────────────────────────────────────
 load();
 render();
+checkTour();
 </script>
 </body>
 </html>
