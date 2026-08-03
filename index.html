@@ -169,7 +169,7 @@
     <button class="tab on" id="tab-ov"  onclick="go('ov')">🏠 Accueil</button>
     <button class="tab"    id="tab-inc" onclick="go('inc')">💵 Revenus</button>
     <button class="tab"    id="tab-bud" onclick="go('bud')">💸 Budget</button>
-    <button class="tab"    id="tab-jnl" onclick="go('jnl')">📝 Journal</button>
+    <button class="tab"    id="tab-jnl" onclick="go('jnl')">📝 Dépenses</button>
     <button class="tab"    id="tab-bil" onclick="go('bil')">📋 Bilan</button>
   </div>
 </div>
@@ -186,8 +186,7 @@
   var b=new Blob([JSON.stringify(m)],{type:"application/manifest+json"});
   document.getElementById("pwa-manifest").href=URL.createObjectURL(b);
   if("serviceWorker"in navigator){
-    var sw='const V="mbc3";self.addEventListener("install",e=>{self.skipWaiting();});self.addEventListener("activate",e=>{e.waitUntil(clients.claim());});self.addEventListener("fetch",e=>{e.respondWith(caches.open(V).then(c=>c.match(e.request).then(r=>r||fetch(e.request).then(res=>{c.put(e.request,res.clone());return res;}))).catch(()=>caches.match(e.request)));});';
-    navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw],{type:"text/javascript"}))).catch(function(){});
+    navigator.serviceWorker.register("./sw.js").catch(function(){});
   }
 })();
 
@@ -226,6 +225,8 @@ var S={
   showInst:true,
   savedAt:null,
   editingTx:null,  // ID de la transaction en cours de modification
+  activeMonth:'',  // Dernier mois actif - pour détecter le changement de mois
+  history:{},      // Snapshots mensuels {YYYY-MM:{incomes:[],exp:{}}}
 };
 
 // ── UTILS ──────────────────────────────────────────────
@@ -253,12 +254,13 @@ function dayLabel(ds){
 }
 
 // ── COMPUTED ───────────────────────────────────────────
-function calc(){
-  var cats=aCats(),totalInc=S.incomes.reduce(function(s,i){return s+num(i.amt);},0);
-  var totalExp=cats.reduce(function(s,c){return s+num(S.exp[c.id]);},0);
+function calc(ovInc,ovExp){
+  var cats=aCats(),inc=ovInc||S.incomes,exp=ovExp||S.exp;
+  var totalInc=inc.reduce(function(s,i){return s+num(i.amt);},0);
+  var totalExp=cats.reduce(function(s,c){return s+num(exp[c.id]);},0);
   var balance=totalInc-totalExp;
   var by={besoin:0,envie:0,epargne:0};
-  cats.forEach(function(c){by[c.type]=(by[c.type]||0)+num(S.exp[c.id]);});
+  cats.forEach(function(c){by[c.type]=(by[c.type]||0)+num(exp[c.id]);});
   var score=0;
   if(totalInc&&totalExp){
     if(balance>=0)score+=35;
@@ -267,7 +269,7 @@ function calc(){
     if(by.epargne/totalInc>=0.1)score+=15;
     if(by.epargne/totalInc>=0.2)score+=15;
   }
-  return{cats:cats,totalInc:totalInc,totalExp:totalExp,balance:balance,by:by,score:Math.min(100,score)};
+  return{cats:cats,totalInc:totalInc,totalExp:totalExp,balance:balance,by:by,score:Math.min(100,score),exp:exp};
 }
 function calcActual(ym){
   var a={};
@@ -281,6 +283,8 @@ function save(){
   clearTimeout(saveT);
   saveT=setTimeout(function(){
     try{
+      // Snapshot du mois courant (photo des revenus+budget de ce mois)
+      S.history[curYM()]={incomes:JSON.parse(JSON.stringify(S.incomes)),exp:JSON.parse(JSON.stringify(S.exp))};
       var ts=new Date().toISOString();S.savedAt=ts;
       localStorage.setItem('mbc-v3',JSON.stringify(S));
       document.getElementById('slbl').textContent='💾 '+new Date(ts).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
@@ -307,6 +311,8 @@ function load(){
     if(d.bilM)S.bilM=d.bilM;
     if(d.showInst!==undefined)S.showInst=d.showInst;
     if(d.showInstall!==undefined)S.showInst=d.showInstall;
+    if(d.activeMonth)S.activeMonth=d.activeMonth;
+    if(d.history)S.history=d.history;
     if(d.savedAt){S.savedAt=d.savedAt;document.getElementById('slbl').textContent='💾 '+new Date(d.savedAt).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});}
   }catch(e){}
   if(!S.bilM)S.bilM=curYM();
@@ -349,7 +355,7 @@ function rOv(){
 
   var inst=S.showInst?'<div class="inst"><button class="ic" onclick="dimInst()">✕</button><h3>📲 Installer l\'app sur votre écran d\'accueil</h3><div class="is"><div style="font-size:22px;flex-shrink:0">🤖</div><div class="it"><strong>Android :</strong> Menu Chrome <strong>⋮</strong> en haut à droite → <strong>Ajouter à l\'écran d\'accueil</strong></div></div><div class="is" style="margin-top:8px"><div style="font-size:22px;flex-shrink:0">🍎</div><div class="it"><strong>iPhone :</strong> Safari → icône <strong>Partager ↑</strong> en bas → <strong>Sur l\'écran d\'accueil</strong></div></div></div>':'';
 
-  var welc=!cv.totalInc?'<div class="welcome"><div style="font-size:26px;margin-bottom:8px">👋</div><div style="font-weight:700;font-size:14px;margin-bottom:5px">Bienvenue sur MonBudget CI !</div><div style="font-size:12px;color:#8D9BAD">Commencez par <strong>💵 Revenus</strong>, planifiez votre <strong>💸 Budget</strong>, puis trackez dans <strong>📝 Journal</strong>.</div></div>':'';
+  var welc=!cv.totalInc?'<div class="welcome"><div style="font-size:26px;margin-bottom:8px">👋</div><div style="font-weight:700;font-size:14px;margin-bottom:5px">Bienvenue sur MonBudget CI !</div><div style="font-size:12px;color:#8D9BAD">Commencez par <strong>💵 Revenus</strong>, planifiez votre <strong>💸 Budget</strong>, puis trackez dans <strong>📝 Dépenses</strong>.</div></div>':'';
 
   var balCol=cv.balance>=0?C.mint:C.coral;
   var stats;
@@ -380,7 +386,7 @@ function rOv(){
   if(cv.totalInc&&cv.by.besoin/cv.totalInc>0.52&&cv.totalExp)tips.push("⚠️ Besoins budgétés : <strong>"+(cv.by.besoin/cv.totalInc*100).toFixed(0)+"%</strong> (max 50%).");
   if(cv.totalInc&&cv.by.envie/cv.totalInc>0.32&&cv.totalExp)tips.push("⚠️ Loisirs budgétés > 30% — ajustez votre plan.");
   if(cv.totalInc&&cv.by.epargne/cv.totalInc<0.2&&cv.totalExp)tips.push("📌 Épargne insuffisante — manque <strong>"+fmt(Math.max(0,cv.totalInc*0.2-cv.by.epargne))+"</strong> pour 20%.");
-  if(!hasAct&&cv.totalInc)tips.push("📝 Commencez à tracker vos dépenses dans <strong>📝 Journal</strong>.");
+  if(!hasAct&&cv.totalInc)tips.push("📝 Allez dans <strong>📝 Dépenses</strong> pour commencer à enregistrer vos achats du mois.");
   if(cv.totalInc&&cv.balance>=0&&cv.by.epargne/cv.totalInc>=0.2&&cv.totalExp)tips.push("✅ Budget bien équilibré — suivez votre plan !");
   var tB=tips.length?'<div class="tips"><div class="tips-ttl">💡 Analyse & Conseils</div>'+tips.map(function(t){return '<div class="tip">'+t+'</div>';}).join('')+'</div>':'';
 
@@ -466,7 +472,7 @@ function rBil(){
 
   var nav='<div class="mn"><button class="nb" onclick="prevBM()">◀</button><span class="ml">'+mLabel(ym)+'</span><button class="nb" onclick="nextBM()" '+(ym>=curYM()?'style="opacity:.25;pointer-events:none"':'')+'>▶</button></div>';
 
-  if(!cv.totalInc&&!hasTx)return nav+'<div class="card" style="text-align:center;padding:24px"><div style="font-size:28px;margin-bottom:9px">📋</div><div style="font-weight:700;margin-bottom:6px">Aucune donnée pour ce mois</div><div style="font-size:12px;color:#8D9BAD">Renseignez vos revenus, planifiez un budget, puis commencez à logger dans <strong>📝 Journal</strong>.</div></div>';
+  if(!cv.totalInc&&!hasTx)return nav+'<div class="card" style="text-align:center;padding:24px"><div style="font-size:28px;margin-bottom:9px">📋</div><div style="font-weight:700;margin-bottom:6px">Aucune donnée pour ce mois</div><div style="font-size:12px;color:#8D9BAD">Renseignez vos revenus, planifiez un budget, puis saisissez vos dépenses dans <strong>📝 Dépenses</strong>.</div></div>';
 
   var budPct=cv.totalExp>0?tAct/cv.totalExp*100:0;
   var epReal=(act['epargne']||0)+(act['invest']||0);
@@ -500,7 +506,9 @@ function rBil(){
 // Fixing renderBilan properly
 function renderBilan(){
   var ym=S.bilM||curYM();
-  var cv=calc();
+  var snap=S.history[ym];
+  var cv=snap?calc(snap.incomes,snap.exp):calc();
+  var cvExp=cv.exp;
   var act=calcActual(ym);
   var tAct=0;
   var keys=Object.keys(act);
@@ -517,7 +525,7 @@ function renderBilan(){
   var nav='<div class="mn"><button class="nb" onclick="prevBM()">◀</button><div style="text-align:center"><div class="ml">'+mLabel(ym)+'</div>'+todayLink+'</div><button class="nb" onclick="nextBM()"'+(ym>=curYM()?' style="opacity:.25;pointer-events:none"':'')+'>▶</button></div>';
 
   if(!cv.totalInc&&!hasTx){
-    return nav+'<div class="card" style="text-align:center;padding:24px"><div style="font-size:28px;margin-bottom:9px">📋</div><div style="font-weight:700;margin-bottom:6px">Aucune donnée pour ce mois</div><div style="font-size:12px;color:#8D9BAD">Renseignez vos revenus, planifiez un budget, puis commencez à logger dans <strong>📝 Journal</strong>.</div></div>';
+    return nav+'<div class="card" style="text-align:center;padding:24px"><div style="font-size:28px;margin-bottom:9px">📋</div><div style="font-weight:700;margin-bottom:6px">Aucune donnée pour ce mois</div><div style="font-size:12px;color:#8D9BAD">Renseignez vos revenus, planifiez un budget, puis saisissez vos dépenses dans <strong>📝 Dépenses</strong>.</div></div>';
   }
 
   var budPct=cv.totalExp>0?(tAct/cv.totalExp*100):0;
@@ -539,7 +547,7 @@ function renderBilan(){
     var t=types[ti],m=TM[t];
     var cs=cv.cats.filter(function(c){return c.type===t;});
     var budS=0,actS=0;
-    for(var ci=0;ci<cs.length;ci++){budS+=num(S.exp[cs[ci].id]);actS+=(act[cs[ci].id]||0);}
+    for(var ci=0;ci<cs.length;ci++){budS+=num(cvExp[cs[ci].id]);actS+=(act[cs[ci].id]||0);}
     var diff=budS-actS;
     var over=t!=='epargne'&&actS>budS&&budS>0;
     var hC=over?C.coral:C.mint;
@@ -547,7 +555,7 @@ function renderBilan(){
 
     var rows='';
     for(var ri=0;ri<cs.length;ri++){
-      var c=cs[ri],bud=num(S.exp[c.id]),a=act[c.id]||0;
+      var c=cs[ri],bud=num(cvExp[c.id]),a=act[c.id]||0;
       if(!bud&&!a)continue;
       var cPct=bud>0?(a/bud*100):0;
       var cC=a>bud&&bud>0?C.coral:C.mint;
@@ -585,11 +593,11 @@ function renderBilan(){
   if(cv.totalInc&&epPct===0&&hasTx) recos.push('⚠️ Aucune transaction d\'épargne enregistrée ce mois — payez-vous en premier !');
   var allC=cv.cats;
   for(var ai=0;ai<allC.length;ai++){
-    var c=allC[ai],bud=num(S.exp[c.id]),a=act[c.id]||0;
+    var c=allC[ai],bud=num(cvExp[c.id]),a=act[c.id]||0;
     if(bud>0&&a>0&&a<bud*0.7) recos.push('💡 Économie sur <strong>'+c.label+'</strong> : '+fmt(bud-a)+' → à transférer en épargne.');
     if(bud>0&&a>bud*1.1) recos.push('⚠️ Dépassement sur <strong>'+c.label+'</strong> : +'+fmt(a-bud)+' au-delà du budget.');
   }
-  if(!hasTx) recos.push('📝 Aucune dépense enregistrée pour ce mois — utilisez <strong>📝 Journal</strong>.');
+  if(!hasTx) recos.push('📝 Aucune dépense enregistrée pour ce mois — utilisez <strong>📝 Dépenses</strong>.');
   if(cv.totalInc>0&&realBal>0&&!hasTx) recos.push('💡 <strong>'+fmt(realBal)+'</strong> de solde budgété disponible ce mois.');
 
   var recoBox=recos.length?'<div class="reco"><div class="reco-t">🎯 Recommandations décisionnelles</div>'+recos.map(function(r){return '<div class="reco-i">'+r+'</div>';}).join('')+'</div>':'';
@@ -685,7 +693,7 @@ var TOUR=[
   {icon:'👋',title:'Bienvenue sur MonBudget CI !',desc:"En quelques étapes, découvrez comment maîtriser votre budget en FCFA — simplement, sans inscription, et vos données restent sur votre téléphone.",tab:null},
   {icon:'💵',title:'1. Revenus',desc:"Saisissez ici tout ce que vous gagnez ce mois : salaire, missions freelance, commerce, bourse, transferts... Mettez à jour chaque mois si vos revenus varient.",tab:'inc'},
   {icon:'💸',title:'2. Budget',desc:"Répartissez vos revenus par catégorie. L'app suit la règle 50/30/20 : max 50% pour les Besoins, 30% pour les Envies, et au moins 20% en Épargne.",tab:'bud'},
-  {icon:'📝',title:'3. Journal',desc:"À chaque dépense, notez-la ici en 5 secondes : date, montant et catégorie. Votre suivi du mois se construit automatiquement.",tab:'jnl'},
+  {icon:'📝',title:'3. Dépenses',desc:"À chaque dépense, notez-la ici en 5 secondes : date, montant et catégorie. Votre suivi du mois se construit automatiquement.",tab:'jnl'},
   {icon:'📋',title:'4. Bilan',desc:"En fin de mois, comparez ici ce que vous aviez prévu avec ce que vous avez réellement dépensé. Naviguez entre les mois avec les flèches.",tab:'bil'},
   {icon:'⭐',title:'Score santé budget',desc:"Ce score (0 → 100) mesure l'équilibre de votre budget. Il apparaît sur l'Accueil. Visez 70 et plus en respectant la règle 50/30/20 !",tab:'ov'},
 ];
@@ -706,7 +714,92 @@ function _showTour(){
 }
 function tourNext(){if(tStep<TOUR.length-1){tStep++;_showTour();}else{endTour();}}
 function endTour(){var ov=document.getElementById('mbc-tour');if(ov)ov.remove();try{localStorage.setItem('mbc-toured','1');}catch(e){}}
-function checkTour(){try{if(!localStorage.getItem('mbc-toured'))setTimeout(startTour,500);}catch(e){}}
+// ── TRANSITION MENSUELLE ───────────────────────────────
+var _mKeepInc=true,_mKeepBud=true;
+
+function checkNewMonth(){
+  var cur=curYM();
+  if(!S.activeMonth){
+    S.activeMonth=cur;
+    if(!S.history[cur])S.history[cur]={incomes:JSON.parse(JSON.stringify(S.incomes)),exp:JSON.parse(JSON.stringify(S.exp))};
+    save();return;
+  }
+  if(S.activeMonth!==cur){
+    // Sauvegarder snapshot du mois sortant avant le popup
+    if(!S.history[S.activeMonth])S.history[S.activeMonth]={incomes:JSON.parse(JSON.stringify(S.incomes)),exp:JSON.parse(JSON.stringify(S.exp))};
+    save();
+    setTimeout(function(){showMonthPopup(cur);},600);
+  }
+}
+
+function showMonthPopup(newYM){
+  _mKeepInc=true;_mKeepBud=true;
+  var prev=S.activeMonth,nl=mLabel(newYM),pl=mLabel(prev);
+  var btnBase='flex:1;padding:10px 6px;border-radius:10px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;transition:all .2s;';
+  var html='<div id="mbc-mnth" style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:9990;background:rgba(10,22,34,.85);display:flex;align-items:center;justify-content:center;padding:16px">'
+    +'<div style="background:#fff;border-radius:20px;padding:22px 18px;width:100%;max-width:400px">'
+    +'<div style="text-align:center;margin-bottom:16px">'
+    +'<div style="font-size:34px;margin-bottom:6px">🗓️</div>'
+    +'<div style="font-size:14px;font-weight:800;color:#1B3A52;margin-bottom:3px">Nouveau mois !</div>'
+    +'<div style="font-size:20px;font-weight:900;color:#00B4A6;margin-bottom:5px">'+nl+'</div>'
+    +'<div style="font-size:11px;color:#8D9BAD">Que voulez-vous faire pour ce nouveau mois ?</div>'
+    +'</div>'
+    +'<div style="border:1.5px solid #EEF1F7;border-radius:14px;overflow:hidden;margin-bottom:12px">'
+    // Revenus
+    +'<div style="padding:13px 14px;border-bottom:1px solid #EEF1F7">'
+    +'<div style="font-size:12px;font-weight:700;color:#1B3A52;margin-bottom:2px">💵 Mes revenus</div>'
+    +'<div style="font-size:10px;color:#8D9BAD;margin-bottom:8px">Même montants qu\'en '+pl+' ?</div>'
+    +'<div style="display:flex;gap:7px">'
+    +'<button id="mi-y" onclick="mToggle(\'inc\',true)" style="'+btnBase+'border:2px solid #00B4A6;background:#00B4A6;color:#fff">✅ Reconduire</button>'
+    +'<button id="mi-n" onclick="mToggle(\'inc\',false)" style="'+btnBase+'border:2px solid #EEF1F7;background:#fff;color:#8D9BAD">🔄 Remettre à zéro</button>'
+    +'</div></div>'
+    // Budget
+    +'<div style="padding:13px 14px">'
+    +'<div style="font-size:12px;font-weight:700;color:#1B3A52;margin-bottom:2px">💸 Mon budget</div>'
+    +'<div style="font-size:10px;color:#8D9BAD;margin-bottom:8px">Même répartition qu\'en '+pl+' ?</div>'
+    +'<div style="display:flex;gap:7px">'
+    +'<button id="mb-y" onclick="mToggle(\'bud\',true)" style="'+btnBase+'border:2px solid #00B4A6;background:#00B4A6;color:#fff">✅ Reconduire</button>'
+    +'<button id="mb-n" onclick="mToggle(\'bud\',false)" style="'+btnBase+'border:2px solid #EEF1F7;background:#fff;color:#8D9BAD">🔄 Remettre à zéro</button>'
+    +'</div></div>'
+    +'</div>'
+    +'<button onclick="applyMonth()" style="width:100%;padding:13px;border:none;border-radius:12px;background:#1B3A52;color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Commencer '+nl+' →</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+
+function mToggle(type,val){
+  var teal='#00B4A6',red='#FF6455',grey='#EEF1F7',w='#fff',g2='#8D9BAD';
+  if(type==='inc'){
+    _mKeepInc=val;
+    var y=document.getElementById('mi-y'),n=document.getElementById('mi-n');
+    if(y){y.style.background=val?teal:w;y.style.color=val?w:g2;y.style.borderColor=val?teal:grey;}
+    if(n){n.style.background=!val?red:w;n.style.color=!val?w:g2;n.style.borderColor=!val?red:grey;}
+  }else{
+    _mKeepBud=val;
+    var yb=document.getElementById('mb-y'),nb=document.getElementById('mb-n');
+    if(yb){yb.style.background=val?teal:w;yb.style.color=val?w:g2;yb.style.borderColor=val?teal:grey;}
+    if(nb){nb.style.background=!val?red:w;nb.style.color=!val?w:g2;nb.style.borderColor=!val?red:grey;}
+  }
+}
+
+function applyMonth(){
+  if(!_mKeepInc)S.incomes=S.incomes.map(function(i){return Object.assign({},i,{amt:''});});
+  if(!_mKeepBud){S.exp={};S.custom=S.custom.map(function(c){return Object.assign({},c,{bud:''});});}
+  S.activeMonth=curYM();save();render();
+  var ov=document.getElementById('mbc-mnth');if(ov)ov.remove();
+}
+
+function checkTour(){
+  try{
+    if(!localStorage.getItem('mbc-toured')){setTimeout(startTour,500);}
+    else{checkNewMonth();}
+  }catch(e){checkNewMonth();}
+}
+function endTour(){
+  var ov=document.getElementById('mbc-tour');if(ov)ov.remove();
+  try{localStorage.setItem('mbc-toured','1');}catch(e){}
+  checkNewMonth();
+}
 
 // ── INIT ───────────────────────────────────────────────
 load();
